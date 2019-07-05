@@ -122,5 +122,7 @@ message TFRecordInputReader {
 // An externally defined input reader. Users may define an extension to this
 // proto to interface their own input readers.
 message ExternalInputReader {
+  optional string input_file = 1 [default = ""]
+  optional string dataset_dir = 2 [default = "/mnt/data/personal_user/yanglei/OpenImage/train/"]
   extensions 1 to 999;
 }

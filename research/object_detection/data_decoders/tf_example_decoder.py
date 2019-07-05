@@ -17,6 +17,7 @@
 A decoder to decode string tensors containing serialized tensorflow.Example
 protos for object detection.
 """
+import os
 import tensorflow as tf
 
 from object_detection.core import data_decoder
@@ -375,6 +376,113 @@ class TfExampleDecoder(data_decoder.DataDecoder):
     keys = decoder.list_items()
     tensors = decoder.decode(serialized_example, items=keys)
     tensor_dict = dict(zip(keys, tensors))
+    is_crowd = fields.InputDataFields.groundtruth_is_crowd
+    tensor_dict[is_crowd] = tf.cast(tensor_dict[is_crowd], dtype=tf.bool)
+    tensor_dict[fields.InputDataFields.image].set_shape([None, None, 3])
+    tensor_dict[fields.InputDataFields.original_image_spatial_shape] = tf.shape(
+        tensor_dict[fields.InputDataFields.image])[:2]
+
+    if fields.InputDataFields.image_additional_channels in tensor_dict:
+      channels = tensor_dict[fields.InputDataFields.image_additional_channels]
+      channels = tf.squeeze(channels, axis=3)
+      channels = tf.transpose(channels, perm=[1, 2, 0])
+      tensor_dict[fields.InputDataFields.image_additional_channels] = channels
+
+    def default_groundtruth_weights():
+      return tf.ones(
+          [tf.shape(tensor_dict[fields.InputDataFields.groundtruth_boxes])[0]],
+          dtype=tf.float32)
+
+    tensor_dict[fields.InputDataFields.groundtruth_weights] = tf.cond(
+        tf.greater(
+            tf.shape(
+                tensor_dict[fields.InputDataFields.groundtruth_weights])[0],
+            0), lambda: tensor_dict[fields.InputDataFields.groundtruth_weights],
+        default_groundtruth_weights)
+    return tensor_dict
+
+
+  def decode_folder(self, name, dataset_dir):
+    """Decodes serialized tensorflow example and returns a tensor dictionary.
+
+    Args:
+      dataset_dir : a string store images and labels, should have structure like 
+        below:
+        dataset_dir
+          -image
+          -label
+      name: file name
+
+    Returns:
+      A dictionary of the following tensors.
+      fields.InputDataFields.image - 3D uint8 tensor of shape [None, None, 3]
+        containing image.
+      fields.InputDataFields.original_image_spatial_shape - 1D int32 tensor of
+        shape [2] containing shape of the image.
+      fields.InputDataFields.source_id - string tensor containing original
+        image id.
+      fields.InputDataFields.key - string tensor with unique sha256 hash key.
+      fields.InputDataFields.filename - string tensor with original dataset
+        filename.
+      fields.InputDataFields.groundtruth_boxes - 2D float32 tensor of shape
+        [None, 4] containing box corners.
+      fields.InputDataFields.groundtruth_classes - 1D int64 tensor of shape
+        [None] containing classes for the boxes.
+      fields.InputDataFields.groundtruth_weights - 1D float32 tensor of
+        shape [None] indicating the weights of groundtruth boxes.
+      fields.InputDataFields.groundtruth_area - 1D float32 tensor of shape
+        [None] containing containing object mask area in pixel squared.
+      fields.InputDataFields.groundtruth_is_crowd - 1D bool tensor of shape
+        [None] indicating if the boxes enclose a crowd.
+
+    Optional:
+      fields.InputDataFields.image_additional_channels - 3D uint8 tensor of
+        shape [None, None, num_additional_channels]. 1st dim is height; 2nd dim
+        is width; 3rd dim is the number of additional channels.
+      fields.InputDataFields.groundtruth_difficult - 1D bool tensor of shape
+        [None] indicating if the boxes represent `difficult` instances.
+      fields.InputDataFields.groundtruth_group_of - 1D bool tensor of shape
+        [None] indicating if the boxes represent `group_of` instances.
+      fields.InputDataFields.groundtruth_keypoints - 3D float32 tensor of
+        shape [None, None, 2] containing keypoints, where the coordinates of
+        the keypoints are ordered (y, x).
+      fields.InputDataFields.groundtruth_instance_masks - 3D float32 tensor of
+        shape [None, None, None] containing instance masks.
+      fields.InputDataFields.groundtruth_image_classes - 1D uint64 of shape
+        [None] containing classes for the boxes.
+      fields.InputDataFields.multiclass_scores - 1D float32 tensor of shape
+        [None * num_classes] containing flattened multiclass scores for
+        groundtruth boxes.
+    """
+    # serialized_example = tf.reshape(tf_example_string_tensor, shape=[])
+    # decoder = slim_example_decoder.TFExampleDecoder(self.keys_to_features,
+    #                                                 self.items_to_handlers)
+    # keys = decoder.list_items()
+    # tensors = decoder.decode(serialized_example, items=keys)
+    # tensor_dict = dict(zip(keys, tensors))
+    image_dir = os.path.join(dataset_dir, "image")
+    label_dir = os.path.join(dataset_dir, "label")
+    image_path = os.path.join(image_dir, name+".jpg")
+    label_path = os.path.join(label_dir, name)
+    image = tf.read_file(image_path)
+    image = tf.image.decode_jpeg(image, channels=3)
+    tensor_dict = dict()
+    tensor_dict[fields.InputDataFields.image] = image
+    tensor_dict[fields.InputDataFields.groundtruth_classes] = [] 
+    tensor_dict[fields.InputDataFields.groundtruth_boxes] = [] 
+    tensor_dict[fields.InputDataFields.groundtruth_group_of] = [] 
+    # tensor_dict[fields.InputDataFields.filename] = [] 
+    with open(label_path, "r+") as f:
+      label_data = f.read().splitlines()
+      for i in len(label_data):
+        single_data = label_data[i].split(" ")
+        tensor_dict[fields.InputDataFields.groundtruth_classes].append(single_data[0]) 
+        tensor_dict[fields.InputDataFields.groundtruth_boxes].append([single_data[3], 
+                                                                      single_data[1], 
+                                                                      single_data[4], 
+                                                                      single_data[2]])
+        tensor_dict[fields.InputDataFields.groundtruth_group_of].append(single_data[5]
+    
     is_crowd = fields.InputDataFields.groundtruth_is_crowd
     tensor_dict[is_crowd] = tf.cast(tensor_dict[is_crowd], dtype=tf.bool)
     tensor_dict[fields.InputDataFields.image].set_shape([None, None, 3])
